@@ -8,7 +8,7 @@ on:
 jobs:
   start-vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # ⏱️ 6 hours (adjust as needed)
+    timeout-minutes: 360
     env:
       TMATE_SERVER: nyc1.tmate.io
 
@@ -19,9 +19,16 @@ jobs:
       - name: 📁 Prepare dirs
         run: mkdir -p links .backup
 
+      - name: 🔧 Set defaults
+        id: set_name
+        run: |
+          name="${{ github.event.client_payload.vps_name }}"
+          name="${name:-manual-vps}"
+          echo "vps_name=$name" >> $GITHUB_OUTPUT
+
       - name: 💾 Restore backup (optional)
         run: |
-          name="${{ github.event.client_payload.vps_name || 'manual-vps' }}"
+          name="${{ steps.set_name.outputs.vps_name }}"
           if [ "${{ github.event.client_payload.backup }}" == "true" ]; then
             echo "Restoring backup for $name..."
             unzip ".backup/$name.zip" -d . || echo "⚠️ No backup found."
@@ -29,11 +36,12 @@ jobs:
 
       - name: 🔐 Start tmate session
         run: |
+          name="${{ steps.set_name.outputs.vps_name }}"
           sudo apt update -y && sudo apt install -y tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH" | tee "links/${{ github.event.client_payload.vps_name || 'manual-vps' }}.txt"
+          echo "$SSH" | tee "links/$name.txt"
 
       - name: 🚀 Start Playit Tunnel
         run: |
@@ -44,7 +52,7 @@ jobs:
 
       - name: 📦 Save backup (user data only)
         run: |
-          name="${{ github.event.client_payload.vps_name || 'manual-vps' }}"
+          name="${{ steps.set_name.outputs.vps_name }}"
           zip -r ".backup/$name.zip" . \
             -x "/usr/*" "/bin/*" "/lib/*" "/lib64/*" "/sbin/*" "/etc/*" "/var/*" \
             ".git/*" ".github/*" ".backup/*" || true
@@ -52,7 +60,7 @@ jobs:
       - name: 📤 Push updated files
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔁 Updated SSH + backup for ${{ github.event.client_payload.vps_name || 'manual-vps' }}"
+          commit_message: "🔁 Updated SSH + backup for ${{ steps.set_name.outputs.vps_name }}"
           file_pattern: 'links/*.txt .backup/*.zip'
 
       - name: ⏳ Keep VPS alive (POSIX-safe loop)
