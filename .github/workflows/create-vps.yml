@@ -1,5 +1,9 @@
 name: Create VPS (Auto-Restart & Safe)
 
+# Allow this workflow to push changes
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   repository_dispatch:
@@ -15,6 +19,9 @@ jobs:
     steps:
       - name: ⬇️ Checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: 📁 Prepare dirs
         run: mkdir -p links .backup
@@ -29,7 +36,7 @@ jobs:
       - name: 💾 Restore backup (optional)
         run: |
           name="${{ steps.set_name.outputs.vps_name }}"
-          if [ "${{ github.event.client_payload.backup }}" == "true" ]; then
+          if [ "${{ github.event.client_payload.backup }}" = "true" ]; then
             echo "Restoring backup for $name..."
             unzip ".backup/$name.zip" -d . || echo "⚠️ No backup found."
           fi
@@ -57,11 +64,28 @@ jobs:
             -x "/usr/*" "/bin/*" "/lib/*" "/lib64/*" "/sbin/*" "/etc/*" "/var/*" \
             ".git/*" ".github/*" ".backup/*" || true
 
-      - name: 📤 Push updated files
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH + backup for ${{ steps.set_name.outputs.vps_name }}"
-          file_pattern: 'links/*.txt .backup/*.zip'
+      - name: 🔧 Configure git remote for push (use GITHUB_TOKEN)
+        run: |
+          # ensure commits use a sane author, and point origin to authenticated URL
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+
+      - name: 📤 Commit & push updated files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # stage files (ignore failure if pattern not present)
+          git add links/*.txt .backup/*.zip || true
+
+          # If there are changes, commit and push to the current branch
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🔁 Updated SSH + backup for ${{ steps.set_name.outputs.vps_name }}"
+            BRANCH=$(git rev-parse --abbrev-ref HEAD || echo "main")
+            git push origin "HEAD:$BRANCH"
+          fi
 
       - name: ⏳ Keep VPS alive (POSIX-safe loop)
         run: |
